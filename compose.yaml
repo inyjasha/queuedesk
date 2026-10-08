@@ -1,0 +1,56 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    environment:
+      GIN_MODE: release
+      DATABASE_URL: postgres://queuedesk:queuedesk@postgres:5432/queuedesk?sslmode=disable
+      REDIS_ADDR: redis:6379
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Copy .env.example to .env first}
+      BOOKING_TTL: ${BOOKING_TTL:-10m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgres://queuedesk:queuedesk@postgres:5432/queuedesk_test?sslmode=disable
+      TEST_REDIS_ADDR: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: queuedesk
+      POSTGRES_PASSWORD: queuedesk
+      POSTGRES_DB: queuedesk
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queuedesk -d queuedesk"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+volumes:
+  postgres_data:

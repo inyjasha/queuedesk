@@ -1,0 +1,33 @@
+@base = http://localhost:8080
+@token = local-demo-token-change-me
+@event = 1
+@reservation = replace-with-reservation-uuid
+
+### Проверка готовности
+GET {{base}}/health/ready
+
+### Дату нужно заменить на будущую
+POST {{base}}/api/v1/events
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title":"Go meetup","starts_at":"2030-01-15T18:00:00Z","capacity":10}
+
+### Список
+GET {{base}}/api/v1/events?limit=20&offset=0
+
+### Повтор этого запроса вернёт ту же бронь
+POST {{base}}/api/v1/reservations
+Idempotency-Key: example-request-001
+Content-Type: application/json
+
+{"event_id":{{event}},"name":"Анна"}
+
+### Статус
+GET {{base}}/api/v1/reservations/{{reservation}}
+
+### Подтверждение
+POST {{base}}/api/v1/reservations/{{reservation}}/confirm
+
+### Отмена
+POST {{base}}/api/v1/reservations/{{reservation}}/cancel

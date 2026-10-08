@@ -1,0 +1,201 @@
+openapi: 3.0.3
+info:
+  title: QueueDesk
+  version: 1.0.0
+  description: Бронирование одного места на мероприятие. Доступ к брони осуществляется по её UUID.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health/live:
+    get:
+      summary: Проверка процесса
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+  /health/ready:
+    get:
+      summary: Проверка PostgreSQL и Redis
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/v1/events:
+    get:
+      summary: Список мероприятий
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Страница мероприятий, кеш до 15 секунд
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, limit, offset]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Event' }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Создать мероприятие
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEvent' }
+      responses:
+        '201':
+          description: Мероприятие создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/reservations:
+    post:
+      summary: Забронировать место
+      description: Один ключ возвращает одну бронь. Другие event_id или name с тем же ключом дают 409. Имя обрезается по краям перед сравнением.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_id, name]
+              properties:
+                event_id: { type: integer, format: int64, minimum: 1 }
+                name: { type: string, description: Непустое имя, максимум 100 байт UTF-8 }
+      responses:
+        '201': { $ref: '#/components/responses/CreatedReservation' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/reservations/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ReservationID' }
+    get:
+      summary: Посмотреть бронь
+      responses:
+        '200': { $ref: '#/components/responses/Reservation' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/reservations/{id}/confirm:
+    parameters:
+      - { $ref: '#/components/parameters/ReservationID' }
+    post:
+      summary: Подтвердить действующую бронь
+      description: Повтор подтверждения уже подтверждённой брони возвращает 200.
+      responses:
+        '200': { $ref: '#/components/responses/Reservation' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/reservations/{id}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/ReservationID' }
+    post:
+      summary: Отменить действующую или подтверждённую бронь
+      description: Повтор отмены уже отменённой брони возвращает 200.
+      responses:
+        '200': { $ref: '#/components/responses/Reservation' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    adminToken:
+      type: http
+      scheme: bearer
+  parameters:
+    ReservationID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    CreateEvent:
+      type: object
+      required: [title, starts_at, capacity]
+      properties:
+        title: { type: string, description: Непустое название, максимум 200 байт UTF-8 }
+        starts_at: { type: string, format: date-time, description: Будущая дата }
+        capacity: { type: integer, minimum: 1, maximum: 100000 }
+    Event:
+      allOf:
+        - { $ref: '#/components/schemas/CreateEvent' }
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, format: int64 }
+    Reservation:
+      type: object
+      required: [id, event_id, name, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: integer, format: int64 }
+        name: { type: string }
+        status: { type: string, enum: [pending, confirmed, cancelled, expired] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+  responses:
+    Health:
+      description: Проверка пройдена
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, enum: [ok] }
+    Error:
+      description: Ошибка запроса или сервера
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Лимит запросов превышен
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Время ожидания в секундах
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Reservation:
+      description: Текущее состояние брони
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Reservation' }
+    CreatedReservation:
+      description: Новая или ранее созданная бронь с тем же ключом
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Reservation' }
